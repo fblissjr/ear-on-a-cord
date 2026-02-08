@@ -13,6 +13,11 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 200
   try {
     return await fn();
   } catch (error: any) {
+    // Don't retry on 400 (Bad Request) as it likely means invalid input (e.g. bad image data)
+    if (error?.status === 400 || error?.code === 400) {
+        throw error;
+    }
+    
     if (retries > 0 && (error?.status === 429 || error?.code === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED'))) {
       console.warn(`Rate limit 429 hit. Retrying in ${delayMs}ms...`);
       await delay(delayMs);
@@ -22,12 +27,16 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 200
   }
 }
 
-// Helper: Check if a local asset exists (HEAD request)
+// Helper: Check if a local asset exists (HEAD request) with Content-Type check
 const checkLocalAsset = async (filename: string): Promise<string | null> => {
     try {
         const path = `/assets/${filename}`;
         const response = await fetch(path, { method: 'HEAD' });
-        if (response.ok) {
+        const type = response.headers.get('content-type');
+        
+        // Strict check: Must be 200 OK AND be an image. 
+        // Prevents React/Vite returning index.html (text/html) for missing files.
+        if (response.ok && type && type.startsWith('image/')) {
             console.log(`Found local asset: ${filename}`);
             return path;
         }
@@ -37,32 +46,39 @@ const checkLocalAsset = async (filename: string): Promise<string | null> => {
     return null;
 };
 
-// Helper: Load local reference image for AI input. Tries multiple extensions.
+// Helper: Load local reference image for AI input. Tries multiple extensions and naming conventions.
 const loadReferenceImage = async (baseName: string): Promise<{ base64: string, mimeType: string } | null> => {
     const extensions = ['png', 'jpg', 'jpeg', 'webp'];
+    // Try "player" then "player_ref"
+    const nameVariations = [baseName, `${baseName}_ref`];
     
-    for (const ext of extensions) {
-        try {
-            const path = `/assets/${baseName}_ref.${ext}`;
-            const response = await fetch(path);
-            if (response.ok) {
-                console.log(`Loaded reference image: ${path}`);
-                const blob = await response.blob();
-                return new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        const base64Full = reader.result as string;
-                        const base64Data = base64Full.split(',')[1];
-                        resolve({ base64: base64Data, mimeType: blob.type });
-                    };
-                    reader.readAsDataURL(blob);
-                });
+    for (const name of nameVariations) {
+        for (const ext of extensions) {
+            try {
+                const path = `/assets/${name}.${ext}`;
+                const response = await fetch(path);
+                const type = response.headers.get('content-type');
+
+                // Strict check to avoid processing HTML as image
+                if (response.ok && type && type.startsWith('image/')) {
+                    console.log(`Loaded reference image: ${path} (${type})`);
+                    const blob = await response.blob();
+                    return new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Full = reader.result as string;
+                            const base64Data = base64Full.split(',')[1];
+                            resolve({ base64: base64Data, mimeType: blob.type });
+                        };
+                        reader.readAsDataURL(blob);
+                    });
+                }
+            } catch (e) {
+                continue;
             }
-        } catch (e) {
-            continue;
         }
     }
-    console.log(`No reference image found for: ${baseName}_ref`);
+    console.log(`No reference image found for: ${baseName} (checked variations)`);
     return null;
 };
 
@@ -87,6 +103,8 @@ export const generateImage = async (prompt: string, reference?: { base64: string
     // 2. Add Text Prompt
     parts.push({ text: prompt });
 
+    console.log("Generating image with prompt:", prompt.slice(0, 50) + "...");
+    
     const response = await callWithRetry(() => ai.models.generateContent({
       model: imageModelName,
       contents: { parts }
@@ -112,7 +130,7 @@ export const generateSprite = async (description: string, assetName?: string): P
         if (localSheet) return localSheet;
     }
 
-    // 2. Check if the user provided a REFERENCE for AI (e.g., "player_ref.jpg")
+    // 2. Check if the user provided a REFERENCE for AI (e.g., "player.jpeg" or "player_ref.jpg")
     const referenceData = assetName ? await loadReferenceImage(assetName) : null;
     
     // 3. Generate with AI
@@ -152,8 +170,7 @@ export const generateBackground = async (description: string, assetName?: string
 }
 
 export const generatePlayerSprite = async (): Promise<string | undefined> => {
-    // This will look for 'player_ref.jpg' (or png/jpeg) and generate the sheet
-    // We add a backup description just in case the reference is missing or ambiguous
+    // This will look for 'player.jpg', 'player_ref.jpg', etc.
     return generateSprite(
         "a cool female detective in a green hoodie", 
         "player"
@@ -169,28 +186,24 @@ export const generateRoom = async (level: number): Promise<Room> => {
       const bgUrl = await generateBackground(description, "room1");
       await delay(1000); 
 
-      // Check for 'sax_ref.jpg' -> generates sheet
       const saxManImg = await generateSprite(
           "a heavy set man playing a gold saxophone, wearing a white shirt and tie", 
           "sax"
       );
       await delay(1000);
       
-      // Check for 'bald_ref.jpg' -> generates sheet
       const baldManImg = await generateSprite(
           "a tall bald man in a blue suit standing menacingly", 
           "bald"
       );
       await delay(1000);
       
-      // Check for 'guitar_ref.jpg' -> generates sheet
       const guitarManImg = await generateSprite(
           "a young man playing electric guitar sitting down", 
           "guitar"
       );
       await delay(1000);
       
-      // Check for 'mic_ref.jpg' -> generates sheet
       const itemImg = await generateSprite(
           "a retro microphone stand", 
           "mic"
