@@ -35,23 +35,39 @@ const App: React.FC = () => {
   };
 
   const startGame = async () => {
+    console.log("App: startGame initiated");
     initAudio();
     playBlip();
     setGameState(GameState.GENERATING_ROOM);
     
     if (!playerState.playerSprite) {
         setLoadingText("GENERATING PLAYER...");
-        const sprite = await generatePlayerSprite();
-        if (sprite) {
-            setPlayerState(prev => ({ ...prev, playerSprite: sprite }));
+        console.log("App: Requesting player sprite...");
+        try {
+            const sprite = await generatePlayerSprite();
+            console.log("App: Player sprite received:", sprite ? "Success" : "Failed (Undefined)");
+            if (sprite) {
+                setPlayerState(prev => ({ ...prev, playerSprite: sprite }));
+            } else {
+                console.warn("App: Player sprite generation returned undefined. Continuing without sprite.");
+            }
+        } catch (e) {
+            console.error("App: Error generating player sprite:", e);
         }
     }
     
     setLoadingText("GENERATING ROOM...");
-    const room = await generateRoom(levelRef.current);
-    setCurrentRoom(room);
-    setGameState(GameState.EXPLORING);
-    addToLog(`Entered ${room.name}`);
+    console.log("App: Requesting room generation...");
+    try {
+        const room = await generateRoom(levelRef.current);
+        console.log("App: Room received:", room.id);
+        setCurrentRoom(room);
+        setGameState(GameState.EXPLORING);
+        addToLog(`Entered ${room.name}`);
+    } catch (e) {
+        console.error("App: Error generating room:", e);
+        setLoadingText("ERROR LOADING. REFRESH.");
+    }
   };
 
   // Move player and update state
@@ -212,11 +228,13 @@ const App: React.FC = () => {
         {/* Loading Overlay */}
         {gameState === GameState.GENERATING_ROOM && (
           <div className="absolute inset-0 bg-black flex flex-col items-center justify-center z-50">
-             <div className="text-green-500 font-['VT323'] text-3xl animate-pulse mb-4">
-               {loadingText}
-             </div>
-             <div className="w-64 h-2 bg-slate-800 rounded overflow-hidden">
-                <div className="h-full bg-green-600 animate-loading-bar"></div>
+             <div className="border-4 border-yellow-400 p-8 bg-black">
+                <div className="text-green-500 font-['VT323'] text-3xl animate-pulse mb-4 uppercase">
+                  {loadingText}
+                </div>
+                <div className="w-64 h-2 bg-slate-800 rounded overflow-hidden">
+                    <div className="h-full bg-green-600 animate-loading-bar"></div>
+                </div>
              </div>
           </div>
         )}

@@ -5,6 +5,12 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const modelName = "gemini-2.5-flash-lite";
 const imageModelName = "gemini-2.5-flash-image";
 
+// Helper for logging
+const log = (msg: string, data?: any) => {
+    if (data) console.log(`[GeminiService] ${msg}`, data);
+    else console.log(`[GeminiService] ${msg}`);
+};
+
 // Helper to prevent rate limiting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -15,6 +21,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 200
   } catch (error: any) {
     // Don't retry on 400 (Bad Request) as it likely means invalid input (e.g. bad image data)
     if (error?.status === 400 || error?.code === 400) {
+        log("API Error 400 - Bad Request. Not retrying.", error);
         throw error;
     }
     
@@ -23,21 +30,36 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 200
       await delay(delayMs);
       return callWithRetry(fn, retries - 1, delayMs * 2); 
     }
+    log("API Error - Not retrying or out of retries", error);
     throw error;
   }
 }
 
+// Robust fetch with timeout (prevents hanging on missing files)
+const safeFetch = async (url: string, timeoutMs = 2000): Promise<Response> => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(id);
+        return res;
+    } catch (e) {
+        clearTimeout(id);
+        throw e;
+    }
+}
+
 // Helper: Check if a local asset exists (HEAD request) with Content-Type check
 const checkLocalAsset = async (filename: string): Promise<string | null> => {
+    const path = `/assets/${filename}`;
     try {
-        const path = `/assets/${filename}`;
-        const response = await fetch(path, { method: 'HEAD' });
+        log(`Checking local asset: ${path}`);
+        const response = await safeFetch(path, 1000); // 1s timeout for HEAD-like check
         const type = response.headers.get('content-type');
         
         // Strict check: Must be 200 OK AND be an image. 
-        // Prevents React/Vite returning index.html (text/html) for missing files.
         if (response.ok && type && type.startsWith('image/')) {
-            console.log(`Found local asset: ${filename}`);
+            log(`Found local asset: ${filename}`);
             return path;
         }
     } catch (e) {
@@ -52,33 +74,41 @@ const loadReferenceImage = async (baseName: string): Promise<{ base64: string, m
     // Try "player" then "player_ref"
     const nameVariations = [baseName, `${baseName}_ref`];
     
+    log(`Starting reference image search for: ${baseName}`);
+
     for (const name of nameVariations) {
         for (const ext of extensions) {
+            const path = `/assets/${name}.${ext}`;
             try {
-                const path = `/assets/${name}.${ext}`;
-                const response = await fetch(path);
+                // log(`Checking: ${path}`);
+                const response = await safeFetch(path, 1500);
                 const type = response.headers.get('content-type');
 
                 // Strict check to avoid processing HTML as image
                 if (response.ok && type && type.startsWith('image/')) {
-                    console.log(`Loaded reference image: ${path} (${type})`);
+                    log(`Loaded reference image: ${path} (${type})`);
                     const blob = await response.blob();
-                    return new Promise((resolve) => {
+                    return new Promise((resolve, reject) => {
                         const reader = new FileReader();
                         reader.onloadend = () => {
-                            const base64Full = reader.result as string;
-                            const base64Data = base64Full.split(',')[1];
-                            resolve({ base64: base64Data, mimeType: blob.type });
+                            if (typeof reader.result === 'string') {
+                                const base64Data = reader.result.split(',')[1];
+                                resolve({ base64: base64Data, mimeType: blob.type });
+                            } else {
+                                reject(new Error("Failed to read blob as base64"));
+                            }
                         };
+                        reader.onerror = () => reject(reader.error);
                         reader.readAsDataURL(blob);
                     });
                 }
             } catch (e) {
+                // log(`Failed checking ${path}: ${e}`);
                 continue;
             }
         }
     }
-    console.log(`No reference image found for: ${baseName} (checked variations)`);
+    log(`No reference image found for: ${baseName}`);
     return null;
 };
 
@@ -90,6 +120,7 @@ export const generateImage = async (prompt: string, reference?: { base64: string
     
     // 1. Add Reference Image (if provided)
     if (reference) {
+        log("Attaching reference image to prompt.");
         parts.push({
             inlineData: {
                 mimeType: reference.mimeType,
@@ -98,23 +129,29 @@ export const generateImage = async (prompt: string, reference?: { base64: string
         });
         // Strengthen prompt to use reference
         prompt = `Strictly preserve the character details from the attached reference image (face, clothes, hair). ${prompt}`;
+    } else {
+        log("No reference image provided for this generation.");
     }
 
     // 2. Add Text Prompt
     parts.push({ text: prompt });
 
-    console.log("Generating image with prompt:", prompt.slice(0, 50) + "...");
+    log(`Calling Gemini Image Model... Prompt: ${prompt.slice(0, 50)}...`);
     
     const response = await callWithRetry(() => ai.models.generateContent({
       model: imageModelName,
       contents: { parts }
-    }), 3, 4000); 
+    }), 3, 5000); 
     
+    log("Gemini Image Response received.");
+
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
+        log("Image data found in response.");
         return `data:image/png;base64,${part.inlineData.data}`;
       }
     }
+    log("No inlineData in response.");
   } catch (e) {
     console.error("Image Gen Error:", e);
   }
@@ -123,11 +160,15 @@ export const generateImage = async (prompt: string, reference?: { base64: string
 
 // Updated logic: Check for Final Asset -> Check for Reference -> Generate
 export const generateSprite = async (description: string, assetName?: string): Promise<string | undefined> => {
-    
+    log(`generateSprite called for: ${assetName} - ${description}`);
+
     // 1. Check if the user provided a FINISHED spritesheet (e.g., "player.png") to skip AI
     if (assetName) {
         const localSheet = await checkLocalAsset(`${assetName}.png`);
-        if (localSheet) return localSheet;
+        if (localSheet) {
+            log(`Using local spritesheet: ${localSheet}`);
+            return localSheet;
+        }
     }
 
     // 2. Check if the user provided a REFERENCE for AI (e.g., "player.jpeg" or "player_ref.jpg")
@@ -170,16 +211,20 @@ export const generateBackground = async (description: string, assetName?: string
 }
 
 export const generatePlayerSprite = async (): Promise<string | undefined> => {
+    log("generatePlayerSprite invoked.");
     // This will look for 'player.jpg', 'player_ref.jpg', etc.
-    return generateSprite(
+    const result = await generateSprite(
         "a cool female detective in a green hoodie", 
         "player"
     );
+    log(`generatePlayerSprite finished. Result: ${result ? 'Valid Data' : 'Undefined'}`);
+    return result;
 }
 
 // -- Text/Logic Generation --
 
 export const generateRoom = async (level: number): Promise<Room> => {
+  log(`generateRoom level ${level}`);
   if (level === 1) {
       const description = "A stylized blue and grey jazz club with heavy curtains and stage lights. Pop art style.";
       
@@ -261,6 +306,7 @@ export const generateRoom = async (level: number): Promise<Room> => {
   `;
 
   try {
+    log("Generating room JSON data...");
     const response = await callWithRetry(() => ai.models.generateContent({
       model: modelName,
       contents: prompt,
