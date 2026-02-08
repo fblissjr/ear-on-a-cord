@@ -1,11 +1,12 @@
-import React, { useRef, useState, useMemo } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Html, OrthographicCamera, useCursor, Text } from '@react-three/drei';
+import React, { useRef, useState } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Html, OrthographicCamera, useCursor, Text, Image as DreiImage } from '@react-three/drei';
 import * as THREE from 'three';
 import { Room, Item, Character, ActionType } from '../types';
 
 interface AdventureSceneProps {
   room: Room;
+  playerSprite?: string;
   currentAction: ActionType;
   onInteractItem: (item: Item) => void;
   onInteractCharacter: (char: Character) => void;
@@ -42,11 +43,13 @@ const Floor: React.FC<{
 
 const Player: React.FC<{ 
   targetPosition: THREE.Vector3 | null; 
+  spriteUrl?: string;
   onReachTarget?: () => void 
-}> = ({ targetPosition, onReachTarget }) => {
+}> = ({ targetPosition, spriteUrl, onReachTarget }) => {
   const ref = useRef<THREE.Group>(null);
   const position = useRef(new THREE.Vector3(0, 0, 0));
   const SPEED = 0.15;
+  const [facingRight, setFacingRight] = useState(true);
 
   useFrame(() => {
     if (ref.current && targetPosition) {
@@ -58,14 +61,12 @@ const Player: React.FC<{
         position.current.add(dir.multiplyScalar(SPEED));
         ref.current.position.copy(position.current);
         
-        // Face target
-        ref.current.lookAt(targetPosition.x, position.current.y, targetPosition.z);
+        // Sprite flip logic
+        if (dir.x > 0.1) setFacingRight(true);
+        if (dir.x < -0.1) setFacingRight(false);
       } else {
-        // Reached
         if (onReachTarget) {
           onReachTarget();
-          // Reset callback to avoid loops if parent doesn't clear target immediately, 
-          // but in this architecture, we rely on parent to handle state. 
         }
       }
     }
@@ -73,20 +74,27 @@ const Player: React.FC<{
 
   return (
     <group ref={ref}>
-      {/* Body */}
-      <mesh position={[0, 1, 0]} castShadow>
-        <capsuleGeometry args={[0.4, 1, 4, 8]} />
-        <meshStandardMaterial color="#3b82f6" />
-      </mesh>
-      {/* Visor */}
-      <mesh position={[0, 1.5, 0.35]}>
-        <boxGeometry args={[0.5, 0.2, 0.2]} />
-        <meshBasicMaterial color="#00ff00" />
-      </mesh>
+      {spriteUrl ? (
+         <DreiImage 
+            url={spriteUrl} 
+            transparent 
+            scale={[3, 3]} 
+            position={[0, 1.5, 0]}
+            // Simple flip effect
+            rotation={[0, facingRight ? 0 : Math.PI, 0]}
+            color="#ffffff"
+         />
+      ) : (
+        <group position={[0, 1, 0]}>
+             <capsuleGeometry args={[0.4, 1, 4, 8]} />
+             <meshStandardMaterial color="#3b82f6" />
+        </group>
+      )}
+      
       {/* Shadow Blob */}
       <mesh position={[0, 0.05, 0]} rotation={[-Math.PI/2, 0, 0]}>
-        <circleGeometry args={[0.4, 16]} />
-        <meshBasicMaterial color="black" transparent opacity={0.5} />
+        <circleGeometry args={[0.6, 16]} />
+        <meshBasicMaterial color="black" transparent opacity={0.6} />
       </mesh>
     </group>
   );
@@ -99,10 +107,8 @@ const EarDrone: React.FC<{ playerPos: THREE.Vector3, active: boolean }> = ({ pla
   useFrame((state) => {
     if (ref.current) {
       const time = state.clock.getElapsedTime();
-      // Floating motion
       const floatY = Math.sin(time * 2) * 0.2 + 2.5;
       
-      // Follow player with lag
       const targetX = playerPos.x - 1;
       const targetZ = playerPos.z - 1;
       
@@ -110,7 +116,6 @@ const EarDrone: React.FC<{ playerPos: THREE.Vector3, active: boolean }> = ({ pla
       ref.current.position.y += (floatY - ref.current.position.y) * 0.1;
       ref.current.position.z += (targetZ - ref.current.position.z) * 0.05;
       
-      // Look at player
       ref.current.lookAt(playerPos);
     }
   });
@@ -127,8 +132,6 @@ const EarDrone: React.FC<{ playerPos: THREE.Vector3, active: boolean }> = ({ pla
       >
         👂
       </Text>
-      {/* Connecting "Cord" is hard to render procedurally between two moving groups in basic R3F without logic, 
-          so we imply it with a particles or just let it be wireless/surreal */}
       {active && (
          <pointLight distance={3} intensity={2} color="#00ff00" />
       )}
@@ -139,46 +142,53 @@ const EarDrone: React.FC<{ playerPos: THREE.Vector3, active: boolean }> = ({ pla
 const BillboardSprite: React.FC<{
   position: [number, number, number];
   emoji: string;
+  imageUrl?: string;
   label: string;
   onClick: () => void;
   highlight: boolean;
-}> = ({ position, emoji, label, onClick, highlight }) => {
+}> = ({ position, emoji, imageUrl, label, onClick, highlight }) => {
   const ref = useRef<THREE.Group>(null);
   const [hovered, setHover] = useState(false);
   useCursor(hovered, 'pointer', 'auto');
 
   useFrame(({ camera }) => {
     if (ref.current) {
-      // Look at camera but lock Y axis usually, but for sprites facing camera fully:
       ref.current.lookAt(camera.position);
     }
   });
 
   return (
     <group ref={ref} position={position} onClick={(e) => { e.stopPropagation(); onClick(); }}>
-      {/* The Sprite */}
-      <Text
-        fontSize={2}
-        anchorX="center"
-        anchorY="bottom"
-        position={[0, 0, 0]}
-        outlineWidth={highlight || hovered ? 0.1 : 0}
-        outlineColor={highlight ? "#00ff00" : "#ffffff"}
-        onPointerOver={() => setHover(true)}
-        onPointerOut={() => setHover(false)}
-      >
-        {emoji}
-      </Text>
+      {imageUrl ? (
+        <DreiImage 
+            url={imageUrl} 
+            transparent
+            scale={[3, 3]} 
+            position={[0, 1.5, 0]}
+            color={highlight || hovered ? "#aaffaa" : "#ffffff"}
+        />
+      ) : (
+        <Text
+            fontSize={2}
+            anchorX="center"
+            anchorY="bottom"
+            position={[0, 0, 0]}
+            outlineWidth={highlight || hovered ? 0.1 : 0}
+            outlineColor={highlight ? "#00ff00" : "#ffffff"}
+        >
+            {emoji}
+        </Text>
+      )}
       
       {/* Shadow */}
       <mesh position={[0, 0.1, 0]} rotation={[-Math.PI/2, 0, 0]}>
-        <circleGeometry args={[0.6, 16]} />
-        <meshBasicMaterial color="black" transparent opacity={0.3} />
+        <circleGeometry args={[0.8, 16]} />
+        <meshBasicMaterial color="black" transparent opacity={0.5} />
       </mesh>
 
       {/* Label (HTML overlay for readability) */}
       {(hovered || highlight) && (
-        <Html position={[0, 2.5, 0]} center>
+        <Html position={[0, 3, 0]} center>
           <div className="bg-black/80 text-green-400 px-2 py-1 rounded border border-green-600 font-mono text-xs whitespace-nowrap pointer-events-none">
             {label}
           </div>
@@ -192,6 +202,7 @@ const BillboardSprite: React.FC<{
 
 const SceneContent: React.FC<AdventureSceneProps> = ({ 
   room, 
+  playerSprite,
   currentAction, 
   onInteractItem, 
   onInteractCharacter 
@@ -199,27 +210,19 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
   const [playerTarget, setPlayerTarget] = useState<THREE.Vector3 | null>(null);
   const [pendingInteraction, setPendingInteraction] = useState<(() => void) | null>(null);
   
-  // Track player position for the Ear to follow
-  // We can just use the target logic or a ref to the player object. 
-  // For simplicity, we assume player starts at 0,0 and moves to playerTarget.
-  // Ideally, we'd hoist player position state, but let's just use the target as a proxy for the camera focus/ear
-  
   const handleMove = (point: THREE.Vector3) => {
     setPlayerTarget(point);
-    setPendingInteraction(null); // Cancel pending if we click floor
+    setPendingInteraction(null);
   };
 
   const handleInteract = (targetPos: THREE.Vector3, callback: () => void) => {
-    // Move to slightly in front of object
-    // Simple logic: Move to object position
     setPlayerTarget(targetPos);
     setPendingInteraction(() => callback);
   };
 
   const mapPercentToWorld = (pctX: number, pctY: number): [number, number, number] => {
-    // Map 0-100 to -10 to 10
     const x = (pctX / 100) * 20 - 10;
-    const z = (pctY / 100) * 20 - 10; // Y in 2D is Z in 3D
+    const z = (pctY / 100) * 20 - 10;
     return [x, 0, z];
   };
 
@@ -227,10 +230,11 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
     <>
       <OrthographicCamera makeDefault position={[20, 20, 20]} zoom={25} near={-50} far={200} onUpdate={c => c.lookAt(0, 0, 0)} />
       
-      <ambientLight intensity={0.5} />
+      <ambientLight intensity={0.7} />
       <pointLight position={[10, 10, 5]} intensity={1} castShadow />
       
       <Player 
+        spriteUrl={playerSprite}
         targetPosition={playerTarget} 
         onReachTarget={() => {
           if (pendingInteraction) {
@@ -247,7 +251,6 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
 
       <Floor color={room.themeColor} onMoveTo={handleMove} />
 
-      {/* Items */}
       {room.items.filter(i => !i.isTaken).map(item => {
         const pos = mapPercentToWorld(item.x, item.y);
         return (
@@ -255,6 +258,7 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
             key={item.id}
             position={pos}
             emoji={item.emoji}
+            imageUrl={item.imageUrl}
             label={item.name}
             highlight={false}
             onClick={() => handleInteract(new THREE.Vector3(...pos), () => onInteractItem(item))}
@@ -262,7 +266,6 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
         );
       })}
 
-      {/* Characters */}
       {room.characters.map(char => {
         const pos = mapPercentToWorld(char.x, char.y);
         return (
@@ -270,6 +273,7 @@ const SceneContent: React.FC<AdventureSceneProps> = ({
             key={char.id}
             position={pos}
             emoji={char.emoji}
+            imageUrl={char.imageUrl}
             label={char.name}
             highlight={false}
             onClick={() => handleInteract(new THREE.Vector3(...pos), () => onInteractCharacter(char))}
@@ -284,10 +288,7 @@ const AdventureScene: React.FC<AdventureSceneProps> = (props) => {
   return (
     <div className="w-full h-[60vh] border-b-2 border-slate-700 bg-black">
       <Canvas shadows>
-        {/* Render content inside Canvas context */}
         <SceneContent {...props} />
-        
-        {/* Simple fog for atmosphere */}
         <fog attach="fog" args={['#000000', 10, 50]} />
       </Canvas>
       

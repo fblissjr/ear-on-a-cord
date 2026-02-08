@@ -11,6 +11,7 @@ export interface Item {
   id: string;
   name: string;
   emoji: string;
+  imageUrl?: string; // Base64 image
   x: number; // Percentage 0-100
   y: number; // Percentage 0-100
   description: string; // What you see
@@ -23,6 +24,7 @@ export interface Character {
   id: string;
   name: string;
   emoji: string;
+  imageUrl?: string; // Base64 image
   x: number;
   y: number;
   description: string;
@@ -42,4 +44,5 @@ export interface PlayerState {
   inventory: string[];
   currentAction: ActionType;
   log: string[]; // History of text
+  playerSprite?: string; // Base64 image of the player
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AdventureScene from './components/AdventureScene';
 import RetroInterface from './components/RetroInterface';
-import { generateRoom } from './services/geminiService';
+import { generateRoom, generatePlayerSprite } from './services/geminiService';
 import { GameState, Room, Item, Character, ActionType, PlayerState } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 
@@ -35,6 +35,18 @@ const App: React.FC = () => {
     playBlip();
     setGameState(GameState.GENERATING_ROOM);
     addToLog("> CONNECTING TO NEURAL NET...");
+    
+    // Generate Player Avatar if not exists
+    if (!playerState.playerSprite) {
+        addToLog("> RESYNCHRONIZING AVATAR...");
+        const sprite = await generatePlayerSprite();
+        if (sprite) {
+            setPlayerState(prev => ({ ...prev, playerSprite: sprite }));
+            addToLog("> AVATAR SYNC COMPLETE.");
+        } else {
+            addToLog("> AVATAR SYNC FAILED. USING DEFAULT MESH.");
+        }
+    }
     
     const room = await generateRoom(levelRef.current);
     setCurrentRoom(room);
@@ -159,6 +171,7 @@ const App: React.FC = () => {
         {currentRoom && (
           <AdventureScene 
             room={currentRoom}
+            playerSprite={playerState.playerSprite}
             currentAction={playerState.currentAction}
             onInteractItem={handleInteractItem}
             onInteractCharacter={handleInteractCharacter}
@@ -168,8 +181,13 @@ const App: React.FC = () => {
         {/* Loading Overlay */}
         {gameState === GameState.GENERATING_ROOM && (
           <div className="absolute inset-0 bg-black flex items-center justify-center z-50">
-            <div className="text-green-500 font-['VT323'] text-2xl animate-pulse">
-              GENERATING REALITY...
+            <div className="flex flex-col items-center">
+                <div className="text-green-500 font-['VT323'] text-3xl animate-pulse mb-4">
+                GENERATING REALITY...
+                </div>
+                <div className="text-green-800 font-mono text-sm">
+                    Processing Neural Assets...
+                </div>
             </div>
           </div>
         )}

@@ -3,6 +3,7 @@ import { Room } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const modelName = "gemini-2.5-flash-lite";
+const imageModelName = "gemini-2.5-flash-image";
 
 // Helper to get random positions that don't overlap too much
 const getRandomPosition = (idx: number, total: number) => {
@@ -15,6 +16,40 @@ const getRandomPosition = (idx: number, total: number) => {
     y: 40 + (Math.random() * 30) // Keep them in the "floor" area (40-70%)
   };
 };
+
+// Generate a sprite image
+export const generateSprite = async (description: string): Promise<string | undefined> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: imageModelName,
+      contents: {
+        parts: [
+          {
+            text: `Generate a pixel art sprite of ${description}. 
+                   Style: Retro comic book, paper cutout. 
+                   View: Full body, front facing game asset.
+                   Background: Solid black background (important for game transparency).
+                   Colors: Vibrant, noir.`
+          }
+        ]
+      }
+    });
+
+    // Extract image
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to generate sprite for", description, e);
+  }
+  return undefined;
+};
+
+export const generatePlayerSprite = async (): Promise<string | undefined> => {
+    return generateSprite("a young woman in a green zip-up hoodie holding a plastic ear, cyber-noir style");
+}
 
 export const generateRoom = async (level: number): Promise<Room> => {
   const prompt = `
@@ -35,7 +70,7 @@ export const generateRoom = async (level: number): Promise<Room> => {
     - 'characters': An array of 1-2 strange inhabitants.
       - 'name': Character name (e.g., "The Observer", "Cable Man").
       - 'emoji': A single emoji.
-      - 'description': Visual description.
+      - 'description': Visual description (used for image generation).
       - 'dialogue': Cryptic message they say.
   `;
 
@@ -90,19 +125,30 @@ export const generateRoom = async (level: number): Promise<Room> => {
       const totalEntities = (data.items?.length || 0) + (data.characters?.length || 0);
 
       // Post-process items
-      const items = (data.items || []).map((item: any, idx: number) => ({
-        ...item,
-        id: `item-${idx}-${Date.now()}`,
-        isTaken: false,
-        ...getRandomPosition(idx, totalEntities)
-      }));
+      const itemsPromise = (data.items || []).map(async (item: any, idx: number) => {
+        const imageUrl = await generateSprite(item.description);
+        return {
+          ...item,
+          id: `item-${idx}-${Date.now()}`,
+          imageUrl,
+          isTaken: false,
+          ...getRandomPosition(idx, totalEntities)
+        };
+      });
 
       // Post-process characters
-      const characters = (data.characters || []).map((char: any, idx: number) => ({
-        ...char,
-        id: `char-${idx}-${Date.now()}`,
-        ...getRandomPosition((data.items?.length || 0) + idx, totalEntities)
-      }));
+      const charactersPromise = (data.characters || []).map(async (char: any, idx: number) => {
+        const imageUrl = await generateSprite(char.description);
+        return {
+            ...char,
+            id: `char-${idx}-${Date.now()}`,
+            imageUrl,
+            ...getRandomPosition((data.items?.length || 0) + idx, totalEntities)
+        };
+      });
+
+      const items = await Promise.all(itemsPromise);
+      const characters = await Promise.all(charactersPromise);
 
       return {
         id: `room-${Date.now()}`,
