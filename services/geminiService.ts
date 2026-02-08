@@ -1,40 +1,21 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Room } from "../types";
+import { Room, Character } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const modelName = "gemini-2.5-flash-lite";
 const imageModelName = "gemini-2.5-flash-image";
 
-// Helper to get random positions that don't overlap too much
-const getRandomPosition = (idx: number, total: number) => {
-  // Distribute items/chars across the screen width (10% to 90%)
-  const step = 80 / (total || 1);
-  const baseX = 10 + (idx * step);
-  
-  return {
-    x: baseX + (Math.random() * 10 - 5),
-    y: 40 + (Math.random() * 30) // Keep them in the "floor" area (40-70%)
-  };
-};
+// -- Image Generation --
 
-// Generate a sprite image
-export const generateSprite = async (description: string): Promise<string | undefined> => {
+export const generateImage = async (prompt: string): Promise<string | undefined> => {
   try {
     const response = await ai.models.generateContent({
       model: imageModelName,
       contents: {
-        parts: [
-          {
-            text: `Generate a pixel art sprite of ${description}. 
-                   Style: Retro comic book, paper cutout. 
-                   View: Full body, front facing game asset.
-                   Background: Solid black background (important for game transparency).
-                   Colors: Vibrant, noir.`
-          }
-        ]
+        parts: [{ text: prompt }]
       }
     });
-
+    
     // Extract image
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
@@ -42,36 +23,48 @@ export const generateSprite = async (description: string): Promise<string | unde
       }
     }
   } catch (e) {
-    console.error("Failed to generate sprite for", description, e);
+    console.error("Image Gen Error:", e);
   }
   return undefined;
 };
 
-export const generatePlayerSprite = async (): Promise<string | undefined> => {
-    return generateSprite("a young woman in a green zip-up hoodie holding a plastic ear, cyber-noir style");
+export const generateSprite = async (description: string): Promise<string | undefined> => {
+    return generateImage(`
+        Pixel art sprite of ${description}. 
+        Style: 90s Adventure Game (LucasArts), vibrant, detailed.
+        View: Full body, standing pose.
+        Background: Solid black (0,0,0) or transparent if possible.
+    `);
+};
+
+export const generateBackground = async (description: string): Promise<string | undefined> => {
+    return generateImage(`
+        Point and click adventure game background art.
+        Scene: ${description}.
+        Style: 90s LucasArts (Day of the Tentacle, Sam & Max). Hand-drawn, wonky perspective, vibrant colors.
+        View: Wide shot, interior or exterior, room composition.
+        No characters, no text, no UI.
+    `);
 }
+
+export const generatePlayerSprite = async (): Promise<string | undefined> => {
+    return generateSprite("a cool female detective in a green hoodie holding a cybernetic ear device");
+}
+
+// -- Text/Logic Generation --
 
 export const generateRoom = async (level: number): Promise<Room> => {
   const prompt = `
-    Generate a level for a "Point and Click" adventure game called "Ear on a Cord".
-    Theme: Surreal Industrial, Body Horror, Lo-fi Sci-Fi (Video style).
-    Level Depth: ${level}.
+    Design a single room for a surreal noir adventure game.
+    Theme: "The Auditory Foundry" - a place where sounds are manufactured.
+    Level: ${level}.
     
-    Return a JSON object with:
-    - 'name': Room name (e.g., "The Flesh Hallway", "Cable Nest").
-    - 'description': Atmospheric description (max 2 sentences).
-    - 'themeColor': A hex color code matching the mood.
-    - 'items': An array of 2-4 interactive objects.
-      - 'name': Object name.
-      - 'emoji': A single emoji representing the object.
-      - 'description': Visual description.
-      - 'soundSecret': Hidden audio clue. 
-      - 'isKey': One object must be the key (boolean).
-    - 'characters': An array of 1-2 strange inhabitants.
-      - 'name': Character name (e.g., "The Observer", "Cable Man").
-      - 'emoji': A single emoji.
-      - 'description': Visual description (used for image generation).
-      - 'dialogue': Cryptic message they say.
+    Return JSON:
+    - name: string
+    - description: string (visual description for background generation)
+    - themeColor: hex string
+    - items: list of 3 items (name, visual_desc, secret_sound, is_key)
+    - characters: list of 1 character (name, visual_desc, personality)
   `;
 
   try {
@@ -81,101 +74,130 @@ export const generateRoom = async (level: number): Promise<Room> => {
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            description: { type: Type.STRING },
-            themeColor: { type: Type.STRING },
-            items: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  emoji: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  soundSecret: { type: Type.STRING },
-                  isKey: { type: Type.BOOLEAN },
+            type: Type.OBJECT,
+            properties: {
+                name: { type: Type.STRING },
+                description: { type: Type.STRING },
+                themeColor: { type: Type.STRING },
+                items: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            name: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                            soundSecret: { type: Type.STRING },
+                            isKey: { type: Type.BOOLEAN }
+                        },
+                        required: ["name", "description", "soundSecret", "isKey"]
+                    }
                 },
-                required: ["name", "emoji", "description", "soundSecret", "isKey"]
-              }
+                characters: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            name: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                            personality: { type: Type.STRING }
+                        },
+                        required: ["name", "description", "personality"]
+                    }
+                }
             },
-            characters: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  emoji: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  dialogue: { type: Type.STRING },
-                },
-                required: ["name", "emoji", "description", "dialogue"]
-              }
-            }
-          },
-          required: ["name", "description", "items", "characters", "themeColor"],
-        },
-      },
+            required: ["name", "description", "items", "characters", "themeColor"]
+        }
+      }
     });
 
     if (response.text) {
       const data = JSON.parse(response.text);
       
-      const totalEntities = (data.items?.length || 0) + (data.characters?.length || 0);
-
-      // Post-process items
-      const itemsPromise = (data.items || []).map(async (item: any, idx: number) => {
-        const imageUrl = await generateSprite(item.description);
-        return {
+      // Parallel generation for assets
+      const bgPromise = generateBackground(data.description);
+      
+      const itemsPromise = data.items.map(async (item: any, i: number) => ({
           ...item,
-          id: `item-${idx}-${Date.now()}`,
-          imageUrl,
-          isTaken: false,
-          ...getRandomPosition(idx, totalEntities)
-        };
-      });
+          id: `item-${i}`,
+          emoji: '📦',
+          imageUrl: await generateSprite(item.description),
+          x: 20 + (i * 20),
+          y: 60 + (Math.random() * 20),
+          width: 8,
+          isTaken: false
+      }));
 
-      // Post-process characters
-      const charactersPromise = (data.characters || []).map(async (char: any, idx: number) => {
-        const imageUrl = await generateSprite(char.description);
-        return {
-            ...char,
-            id: `char-${idx}-${Date.now()}`,
-            imageUrl,
-            ...getRandomPosition((data.items?.length || 0) + idx, totalEntities)
-        };
-      });
+      const charPromise = data.characters.map(async (char: any, i: number) => ({
+          ...char,
+          id: `char-${i}`,
+          emoji: '👤',
+          imageUrl: await generateSprite(char.description),
+          x: 70,
+          y: 60,
+          width: 12
+      }));
 
-      const items = await Promise.all(itemsPromise);
-      const characters = await Promise.all(charactersPromise);
+      const [bgUrl, items, characters] = await Promise.all([bgPromise, Promise.all(itemsPromise), Promise.all(charPromise)]);
 
       return {
         id: `room-${Date.now()}`,
         name: data.name,
         description: data.description,
-        themeColor: data.themeColor || '#00ff00',
+        backgroundImageUrl: bgUrl,
+        themeColor: data.themeColor,
         items,
         characters
       };
     }
-    throw new Error("No response text");
-  } catch (error) {
-    console.error("Gemini Error:", error);
+    throw new Error("No response");
+  } catch (e) {
+    console.error(e);
     return {
-      id: "fallback",
-      name: "Static Void",
-      description: "The connection is weak. You see only ghosts.",
-      themeColor: "#333333",
-      items: [
-        { 
-          id: '1', name: 'Old Terminal', emoji: '📺', x: 50, y: 50, 
-          description: 'It hums with ancient power.', 
-          soundSecret: 'You hear the tapping of a thousand lost souls coding in COBOL.', 
-          isKey: true, isTaken: false 
-        }
-      ],
-      characters: []
+        id: 'fallback',
+        name: 'The White Room',
+        description: 'A place of nothingness.',
+        themeColor: '#ffffff',
+        items: [],
+        characters: []
     };
   }
 };
+
+export const generateDialogue = async (char: Character, playerPrompt: string): Promise<{ text: string, options: string[] }> => {
+    const prompt = `
+        Roleplay as ${char.name}.
+        Personality: ${char.personality}.
+        Player says: "${playerPrompt}".
+        
+        Respond in character (max 20 words).
+        Then provide 3 short options for what the player can say next.
+        
+        Return JSON: { response: string, options: string[] }
+    `;
+    
+    try {
+        const result = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        response: { type: Type.STRING },
+                        options: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    }
+                }
+            }
+        });
+        
+        if (result.text) {
+            const data = JSON.parse(result.text);
+            return { text: data.response, options: data.options };
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    
+    return { text: "...", options: ["Leave"] };
+}

@@ -1,12 +1,15 @@
 import React from 'react';
-import { ActionType, PlayerState, Room } from '../types';
+import { ActionType, PlayerState, Room, DialogueOption } from '../types';
 
 interface RetroInterfaceProps {
   room: Room | null;
   playerState: PlayerState;
   onSetAction: (action: ActionType) => void;
   onNextLevel: () => void;
+  onDialogueSelect: (option: string) => void;
   isGenerating: boolean;
+  dialogueOptions: string[] | null;
+  npcText: string | null;
 }
 
 const RetroInterface: React.FC<RetroInterfaceProps> = ({ 
@@ -14,68 +17,85 @@ const RetroInterface: React.FC<RetroInterfaceProps> = ({
   playerState, 
   onSetAction, 
   onNextLevel,
-  isGenerating
+  onDialogueSelect,
+  isGenerating,
+  dialogueOptions,
+  npcText
 }) => {
-  const verbs: ActionType[] = ['LOOK', 'LISTEN', 'TALK', 'TAKE', 'MOVE'];
+  const verbs: ActionType[] = [
+    'GIVE', 'PICK UP', 'USE',
+    'OPEN', 'LOOK AT', 'PUSH',
+    'CLOSE', 'TALK TO', 'PULL'
+  ];
+
+  // If in Dialogue Mode, render a different interface
+  if (dialogueOptions) {
+      return (
+        <div className="h-[40vh] bg-[#1a1a1a] border-t-4 border-slate-600 p-6 flex flex-col font-['Space_Mono']">
+            {/* NPC Portrait placeholder could go here */}
+            <div className="flex-1 text-center mb-6">
+                 <p className="text-yellow-400 text-xl mb-2 font-bold">{npcText}</p>
+            </div>
+            
+            <div className="flex flex-col gap-2">
+                {dialogueOptions.map((opt, i) => (
+                    <button 
+                        key={i}
+                        onClick={() => onDialogueSelect(opt)}
+                        className="text-left text-green-500 hover:text-green-300 hover:bg-slate-800 p-2 rounded text-lg transition-colors border border-transparent hover:border-green-800"
+                    >
+                        • "{opt}"
+                    </button>
+                ))}
+            </div>
+        </div>
+      );
+  }
 
   return (
-    <div className="flex flex-col h-[40vh] bg-slate-900 border-t-4 border-slate-600 font-mono text-sm md:text-base">
+    <div className="flex flex-col h-[40vh] bg-black font-['VT323']">
       
-      {/* Log / Description Area */}
-      <div className="flex-1 p-4 overflow-y-auto font-bold text-green-400 space-y-2 font-['VT323'] text-xl">
-        {playerState.log.map((line, i) => (
-          <p key={i} className="leading-tight animate-fade-in">
-            {line.startsWith('>') ? <span className="text-slate-500 mr-2">{line}</span> : line}
-            {line.startsWith('"') ? <span className="text-yellow-200">{line}</span> : null}
-          </p>
-        ))}
-        {isGenerating && <p className="animate-pulse text-blue-400">...Incoming Transmission...</p>}
-        <div id="log-end" />
+      {/* Action Line (The "Sentence" being constructed) */}
+      <div className="h-10 bg-black flex items-center justify-center border-t border-slate-700">
+        <span className="text-green-500 text-2xl uppercase tracking-widest">
+            {playerState.currentAction || "Walk to"} {playerState.log[playerState.log.length - 1]?.startsWith('>') ? '' : ''}
+        </span>
       </div>
 
-      {/* Control Panel */}
-      <div className="h-1/3 bg-slate-800 border-t border-slate-600 flex">
+      <div className="flex-1 flex border-t border-slate-700">
         
-        {/* Verbs */}
-        <div className="w-1/3 grid grid-cols-2 lg:grid-cols-3 gap-1 p-2 border-r border-slate-600">
+        {/* Verbs Grid (LucasArts Style) */}
+        <div className="w-1/2 p-4 bg-[#1a1a1a] grid grid-cols-3 gap-x-2 gap-y-4 content-center">
           {verbs.map(verb => (
             <button
               key={verb}
               onClick={() => onSetAction(verb)}
-              className={`text-center py-2 hover:bg-green-900/50 transition-colors uppercase font-bold tracking-widest text-xs md:text-sm border border-transparent hover:border-green-800
-                ${playerState.currentAction === verb ? 'bg-green-800 text-white border-green-600' : 'text-slate-400'}`}
+              className={`text-center text-3xl transition-colors uppercase
+                ${playerState.currentAction === verb ? 'text-yellow-400 font-bold scale-105' : 'text-green-600 hover:text-green-400'}`}
             >
               {verb}
             </button>
           ))}
         </div>
 
-        {/* Inventory */}
-        <div className="w-1/3 p-2 border-r border-slate-600 flex flex-col">
-          <span className="text-xs text-slate-500 uppercase mb-1 tracking-widest">Inventory</span>
-          <div className="flex flex-wrap gap-2 content-start">
-            {playerState.inventory.length === 0 && <span className="text-slate-600 italic">Empty</span>}
-            {playerState.inventory.map((item, i) => (
-              <span key={i} className="bg-slate-700 px-2 py-1 rounded text-xs border border-slate-500">{item}</span>
-            ))}
-          </div>
-        </div>
-
-        {/* Room Status */}
-        <div className="w-1/3 p-2 flex flex-col justify-between bg-black/20">
-          <div>
-            <span className="text-xs text-slate-500 uppercase tracking-widest">Location</span>
-            <div className="text-white font-bold truncate text-lg font-['VT323']">{room?.name || 'Unknown'}</div>
+        {/* Inventory Grid */}
+        <div className="w-1/2 bg-[#222] p-4 border-l border-slate-700">
+          <div className="flex justify-between items-end mb-2 border-b border-slate-600 pb-1">
+             <span className="text-slate-400 uppercase text-sm">Inventory</span>
+             <span className="text-slate-500 text-xs">{room?.name}</span>
           </div>
           
-          <div className="text-[10px] text-slate-600 font-mono">
-            EAR-OS v1.02
-            <button 
-              onClick={onNextLevel}
-              className="ml-2 hover:text-red-400 uppercase"
-            >
-              [Skip]
-            </button>
+          <div className="grid grid-cols-4 gap-2">
+            {playerState.inventory.map((item, i) => (
+              <div key={i} className="aspect-square bg-slate-700/50 flex items-center justify-center border border-slate-600 hover:border-white cursor-pointer">
+                  {/* Just text for now, could be icons */}
+                  <span className="text-xs text-center text-white p-1 leading-none">{item}</span>
+              </div>
+            ))}
+            {/* Empty Slots filler */}
+            {[...Array(8)].map((_, i) => (
+                <div key={`empty-${i}`} className="aspect-square bg-black/30 border border-slate-800"></div>
+            ))}
           </div>
         </div>
 
