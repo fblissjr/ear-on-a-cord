@@ -1,24 +1,42 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { SoundMystery, ValidationResult } from "../types";
+import { Room } from "../types";
 
-// Initialize Gemini
-// NOTE: API Key is handled via process.env.API_KEY as per instructions.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const modelName = "gemini-2.5-flash-lite";
 
-const modelName = "gemini-3-flash-preview";
+// Helper to get random positions that don't overlap too much
+const getRandomPosition = (idx: number, total: number) => {
+  // Distribute items/chars across the screen width (10% to 90%)
+  const step = 80 / (total || 1);
+  const baseX = 10 + (idx * step);
+  
+  return {
+    x: baseX + (Math.random() * 10 - 5),
+    y: 40 + (Math.random() * 30) // Keep them in the "floor" area (40-70%)
+  };
+};
 
-export const generateMystery = async (): Promise<SoundMystery> => {
+export const generateRoom = async (level: number): Promise<Room> => {
   const prompt = `
-    Generate a "Sound Mystery" for a game called "Ear on a Cord".
-    The player has to guess an object or event based on a description of the sound it makes.
+    Generate a level for a "Point and Click" adventure game called "Ear on a Cord".
+    Theme: Surreal Industrial, Body Horror, Lo-fi Sci-Fi (Video style).
+    Level Depth: ${level}.
     
     Return a JSON object with:
-    - 'category': A broad category (e.g., Nature, Industrial, Kitchen, Office).
-    - 'clue': A vivid, sensory description of the sound WITHOUT naming the object. Focus on texture, rhythm, and pitch.
-    - 'hiddenObject': The specific object or action producing the sound.
-    - 'difficulty': One of 'easy', 'medium', 'hard'.
-    
-    Make the 'clue' poetic and slightly surreal, fitting an art-house aesthetic.
+    - 'name': Room name (e.g., "The Flesh Hallway", "Cable Nest").
+    - 'description': Atmospheric description (max 2 sentences).
+    - 'themeColor': A hex color code matching the mood.
+    - 'items': An array of 2-4 interactive objects.
+      - 'name': Object name.
+      - 'emoji': A single emoji representing the object.
+      - 'description': Visual description.
+      - 'soundSecret': Hidden audio clue. 
+      - 'isKey': One object must be the key (boolean).
+    - 'characters': An array of 1-2 strange inhabitants.
+      - 'name': Character name (e.g., "The Observer", "Cable Man").
+      - 'emoji': A single emoji.
+      - 'description': Visual description.
+      - 'dialogue': Cryptic message they say.
   `;
 
   try {
@@ -30,78 +48,88 @@ export const generateMystery = async (): Promise<SoundMystery> => {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            category: { type: Type.STRING },
-            clue: { type: Type.STRING },
-            hiddenObject: { type: Type.STRING },
-            difficulty: { type: Type.STRING, enum: ["easy", "medium", "hard"] },
+            name: { type: Type.STRING },
+            description: { type: Type.STRING },
+            themeColor: { type: Type.STRING },
+            items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  emoji: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  soundSecret: { type: Type.STRING },
+                  isKey: { type: Type.BOOLEAN },
+                },
+                required: ["name", "emoji", "description", "soundSecret", "isKey"]
+              }
+            },
+            characters: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  emoji: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  dialogue: { type: Type.STRING },
+                },
+                required: ["name", "emoji", "description", "dialogue"]
+              }
+            }
           },
-          required: ["category", "clue", "hiddenObject", "difficulty"],
+          required: ["name", "description", "items", "characters", "themeColor"],
         },
       },
     });
 
     if (response.text) {
       const data = JSON.parse(response.text);
+      
+      const totalEntities = (data.items?.length || 0) + (data.characters?.length || 0);
+
+      // Post-process items
+      const items = (data.items || []).map((item: any, idx: number) => ({
+        ...item,
+        id: `item-${idx}-${Date.now()}`,
+        isTaken: false,
+        ...getRandomPosition(idx, totalEntities)
+      }));
+
+      // Post-process characters
+      const characters = (data.characters || []).map((char: any, idx: number) => ({
+        ...char,
+        id: `char-${idx}-${Date.now()}`,
+        ...getRandomPosition((data.items?.length || 0) + idx, totalEntities)
+      }));
+
       return {
-        ...data,
-        id: Math.random().toString(36).substring(7),
+        id: `room-${Date.now()}`,
+        name: data.name,
+        description: data.description,
+        themeColor: data.themeColor || '#00ff00',
+        items,
+        characters
       };
     }
-    throw new Error("No response text from Gemini");
+    throw new Error("No response text");
   } catch (error) {
-    console.error("Gemini generation error:", error);
-    // Fallback for demo stability if API fails
+    console.error("Gemini Error:", error);
     return {
       id: "fallback",
-      category: "Nature",
-      clue: "A rhythmic, hollow tapping that echoes through a wooden chamber, accelerating into a rapid drumroll.",
-      hiddenObject: "Woodpecker",
-      difficulty: "medium",
-    };
-  }
-};
-
-export const validateGuess = async (mystery: SoundMystery, userGuess: string): Promise<ValidationResult> => {
-  const prompt = `
-    The hidden object is: "${mystery.hiddenObject}".
-    The user guessed: "${userGuess}".
-    
-    Determine if the user's guess is correct or very close (synonyms are okay).
-    
-    Return JSON:
-    - isCorrect: boolean
-    - feedback: A short, slightly cryptic sentence explaining why it is right or wrong.
-    - similarityScore: A number 0-100 indicating how close they were.
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isCorrect: { type: Type.BOOLEAN },
-            feedback: { type: Type.STRING },
-            similarityScore: { type: Type.INTEGER },
-          },
-          required: ["isCorrect", "feedback", "similarityScore"],
-        },
-      },
-    });
-
-    if (response.text) {
-      return JSON.parse(response.text) as ValidationResult;
-    }
-    throw new Error("No validation response");
-  } catch (error) {
-    console.error("Gemini validation error:", error);
-    return {
-      isCorrect: false,
-      feedback: "The connection to the ether was lost. Try again.",
-      similarityScore: 0,
+      name: "Static Void",
+      description: "The connection is weak. You see only ghosts.",
+      themeColor: "#333333",
+      items: [
+        { 
+          id: '1', name: 'Old Terminal', emoji: '📺', x: 50, y: 50, 
+          description: 'It hums with ancient power.', 
+          soundSecret: 'You hear the tapping of a thousand lost souls coding in COBOL.', 
+          isKey: true, isTaken: false 
+        }
+      ],
+      characters: []
     };
   }
 };

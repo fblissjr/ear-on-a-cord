@@ -1,29 +1,45 @@
 export enum GameState {
-  INTRO = 'INTRO',
-  LOADING_MYSTERY = 'LOADING_MYSTERY',
-  PLAYING = 'PLAYING',
-  VALIDATING = 'VALIDATING',
-  SUCCESS = 'SUCCESS',
-  GAME_OVER = 'GAME_OVER',
-  ERROR = 'ERROR'
+  MENU = 'MENU',
+  GENERATING_ROOM = 'GENERATING_ROOM',
+  EXPLORING = 'EXPLORING',
+  GAME_OVER = 'GAME_OVER'
 }
 
-export interface SoundMystery {
+export type ActionType = 'LOOK' | 'LISTEN' | 'TAKE' | 'MOVE' | 'TALK';
+
+export interface Item {
   id: string;
-  category: string;
-  clue: string; // The "sound" description (e.g., "A rhythmic crunching on a forest floor")
-  hiddenObject: string; // The answer (e.g., "Walking on dry leaves")
-  difficulty: 'easy' | 'medium' | 'hard';
+  name: string;
+  emoji: string;
+  x: number; // Percentage 0-100
+  y: number; // Percentage 0-100
+  description: string; // What you see
+  soundSecret: string; // What you hear (clue)
+  isKey: boolean; // Does this unlock the next room?
+  isTaken: boolean;
 }
 
-export interface ValidationResult {
-  isCorrect: boolean;
-  feedback: string;
-  similarityScore: number; // 0 to 100
+export interface Character {
+  id: string;
+  name: string;
+  emoji: string;
+  x: number;
+  y: number;
+  description: string;
+  dialogue: string; // What they say when you TALK
 }
 
-export interface PendulumState {
-  angle: number;
-  velocity: number;
-  length: number;
+export interface Room {
+  id: string;
+  name: string;
+  description: string;
+  items: Item[];
+  characters: Character[];
+  themeColor: string; // Hex code for ambiance
+}
+
+export interface PlayerState {
+  inventory: string[];
+  currentAction: ActionType;
+  log: string[]; // History of text
 }

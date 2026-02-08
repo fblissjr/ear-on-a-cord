@@ -1,170 +1,187 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GoogleGenAI } from "@google/genai";
-import PendulumCanvas from './components/PendulumCanvas';
-import Interface from './components/Interface';
-import { generateMystery, validateGuess } from './services/geminiService';
-import { GameState, SoundMystery } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import AdventureScene from './components/AdventureScene';
+import RetroInterface from './components/RetroInterface';
+import { generateRoom } from './services/geminiService';
+import { GameState, Room, Item, Character, ActionType, PlayerState } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
-import { LiveMusicHelper } from './utils/live_music_helper';
-
-// Global reference for the music helper to persist across re-renders
-let lyriaHelper: LiveMusicHelper | null = null;
 
 const App: React.FC = () => {
-  const [gameState, setGameState] = useState<GameState>(GameState.INTRO);
-  const [mystery, setMystery] = useState<SoundMystery | null>(null);
-  const [signalStrength, setSignalStrength] = useState(0);
-  const [validationFeedback, setValidationFeedback] = useState<string | null>(null);
+  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
+  const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
+  const [playerState, setPlayerState] = useState<PlayerState>({
+    inventory: [],
+    currentAction: 'LOOK',
+    log: ["System initialized...", "Awaiting connection."]
+  });
   
-  // Local physics audio (Wind, Hum)
-  const { initAudio, updateAudio, playSuccessSound, playFailureSound } = useAudioEngine();
-  
-  // We use refs for high-frequency updates to avoid React render cycles for audio
-  const signalRef = useRef(0);
+  const { initAudio, playBlip, playError, playSuccess, playScan } = useAudioEngine();
+  const levelRef = useRef(1);
 
-  // Initialize Lyria helper once
+  // Auto-scroll log
   useEffect(() => {
-    if (!lyriaHelper) {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Using the experimental realtime model
-      lyriaHelper = new LiveMusicHelper(ai, 'lyria-realtime-exp');
-    }
-    
-    // Cleanup on unmount
-    return () => {
-      lyriaHelper?.stop();
-    };
-  }, []);
+    const el = document.getElementById('log-end');
+    el?.scrollIntoView({ behavior: 'smooth' });
+  }, [playerState.log]);
 
-  // Effect: Handle Game State changes for Music
-  useEffect(() => {
-    if (!lyriaHelper) return;
-
-    if (gameState === GameState.PLAYING && mystery) {
-      // Start the music stream when playing starts
-      lyriaHelper.play().then(() => {
-        // Set the prompt to match the mystery vibe
-        // We mix a base industrial layer with the specific clue
-        lyriaHelper?.setPrompts([
-          { 
-            text: "Dark industrial ambient drone, avant-garde, musique concrète, deep space silence, metallic textures", 
-            weight: 0.5 
-          },
-          { 
-            text: `Sound design of ${mystery.clue}. Experimental, cinematic, foley.`, 
-            weight: 1.0 
-          }
-        ]);
-      });
-    } else if (gameState === GameState.GAME_OVER || gameState === GameState.SUCCESS) {
-      // Fade out music on end
-      lyriaHelper.setVolume(0);
-      setTimeout(() => lyriaHelper?.pause(), 1000);
-    }
-  }, [gameState, mystery]);
-
-  // Velocity comes from the canvas component (physics engine)
-  const handleVelocityChange = useCallback((velocity: number) => {
-    // 1. Calculate Signal Strength based on velocity
-    let strength = 0;
-    const v = velocity * 10; 
-
-    if (v > 0.1 && v < 2.5) {
-      // Sweet spot
-      strength = Math.min(1, v / 0.5);
-      if (v > 1.5) strength = Math.max(0, 1 - (v - 1.5)); // Drop off if too fast
-    } else {
-      strength = Math.max(0, signalRef.current - 0.015); // Decay
-    }
-
-    // Smooth dampening
-    const prev = signalRef.current;
-    const newStrength = prev + (strength - prev) * 0.1;
-    signalRef.current = newStrength;
-    
-    // 2. Update React State (throttled visually via React batching usually, but good to be careful)
-    setSignalStrength(newStrength);
-
-    // 3. Update Audio Engines
-    
-    // Local Physics Audio (Wind/Hum) - Always active for tactile feel
-    updateAudio(velocity, newStrength);
-
-    // Lyria Music (The Mystery) - Volume controls "Tuning In"
-    if (lyriaHelper && gameState === GameState.PLAYING) {
-      // We map signal strength to volume. 
-      // Non-linear curve: It stays quiet until you really get it right
-      const volume = Math.pow(newStrength, 1.5); 
-      lyriaHelper.setVolume(volume);
-    }
-
-  }, [gameState, updateAudio]);
+  const addToLog = (text: string) => {
+    setPlayerState(prev => ({
+      ...prev,
+      log: [...prev.log, text]
+    }));
+  };
 
   const startGame = async () => {
-    initAudio(); // Initialize local audio context
+    initAudio();
+    playBlip();
+    setGameState(GameState.GENERATING_ROOM);
+    addToLog("> CONNECTING TO NEURAL NET...");
     
-    setGameState(GameState.LOADING_MYSTERY);
-    try {
-      const newMystery = await generateMystery();
-      setMystery(newMystery);
-      setGameState(GameState.PLAYING);
-      signalRef.current = 0;
-      setSignalStrength(0);
-    } catch (e) {
-      console.error(e);
-      setGameState(GameState.ERROR);
+    const room = await generateRoom(levelRef.current);
+    setCurrentRoom(room);
+    setGameState(GameState.EXPLORING);
+    addToLog(`> LOADED: ${room.name}`);
+    addToLog(room.description);
+  };
+
+  const handleInteractItem = (item: Item) => {
+    playBlip();
+
+    switch (playerState.currentAction) {
+      case 'LOOK':
+        addToLog(`> Looking at ${item.name}...`);
+        addToLog(item.description);
+        break;
+        
+      case 'LISTEN':
+        playScan();
+        addToLog(`> Tuning Ear to ${item.name}...`);
+        setTimeout(() => {
+          addToLog(`AUDIO DECRYPTED: "${item.soundSecret}"`);
+        }, 500);
+        break;
+
+      case 'TAKE':
+        if (item.isKey) {
+          playSuccess();
+          addToLog(`> You found the SIGNAL KEY inside the ${item.name}!`);
+          addToLog("The exit resonates with a new frequency.");
+          setPlayerState(prev => ({
+            ...prev,
+            inventory: [...prev.inventory, "Signal Key"]
+          }));
+          // Auto progress after delay
+          setTimeout(() => {
+            handleNextLevel();
+          }, 3000);
+        } else {
+          playError();
+          addToLog(`> You try to take the ${item.name}, but it's bolted down or useless.`);
+        }
+        break;
+
+      case 'TALK':
+        playError();
+        addToLog(`> You speak to the ${item.name}. It ignores you, obviously.`);
+        break;
+
+      case 'MOVE':
+        playError();
+        addToLog("> Can't move there yet. Find the Signal Key first.");
+        break;
     }
   };
 
-  const handleGuess = async (guess: string) => {
-    if (!mystery) return;
-    
-    setGameState(GameState.VALIDATING);
-    try {
-      const result = await validateGuess(mystery, guess);
-      setValidationFeedback(result.feedback);
+  const handleInteractCharacter = (char: Character) => {
+    playBlip();
+
+    switch(playerState.currentAction) {
+      case 'LOOK':
+        addToLog(`> Observing ${char.name}...`);
+        addToLog(char.description);
+        break;
+
+      case 'TALK':
+        addToLog(`> You greet ${char.name}.`);
+        setTimeout(() => {
+          addToLog(`"${char.dialogue}"`);
+        }, 500);
+        break;
       
-      if (result.isCorrect || result.similarityScore > 80) {
-        playSuccessSound();
-        setGameState(GameState.SUCCESS);
-      } else {
-        playFailureSound();
-        setGameState(GameState.GAME_OVER);
-      }
-    } catch (e) {
-      console.error(e);
-      setGameState(GameState.ERROR);
-    }
-  };
+      case 'LISTEN':
+        playScan();
+        addToLog(`> Listening to the thoughts of ${char.name}...`);
+        setTimeout(() => {
+          addToLog(`...Static... Fear... Hunger...`);
+        }, 800);
+        break;
 
-  const resetGame = () => {
-    setMystery(null);
-    setValidationFeedback(null);
-    signalRef.current = 0;
-    setSignalStrength(0);
+      default:
+        playError();
+        addToLog("> Not possible.");
+        break;
+    }
+  }
+
+  const handleNextLevel = () => {
+    levelRef.current += 1;
+    setPlayerState(prev => ({
+      ...prev,
+      inventory: [], 
+      log: [`> JUMPING TO SECTOR ${levelRef.current}...`]
+    }));
     startGame();
   };
 
-  return (
-    <div className="relative w-full h-screen overflow-hidden bg-slate-950">
-      
-      {/* 3D/Physics Layer */}
-      <PendulumCanvas 
-        onVelocityChange={handleVelocityChange} 
-        isActive={gameState === GameState.PLAYING}
-      />
+  const setAction = (action: ActionType) => {
+    playBlip();
+    setPlayerState(prev => ({ ...prev, currentAction: action }));
+    addToLog(`> MODE: ${action}`);
+  };
 
-      {/* UI Overlay Layer */}
-      <Interface 
-        gameState={gameState}
-        mystery={mystery}
-        signalStrength={signalStrength}
-        onStart={startGame}
-        onGuess={handleGuess}
-        onReset={resetGame}
-        validationFeedback={validationFeedback}
+  if (gameState === GameState.MENU) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-black text-green-500 font-['VT323']">
+        <h1 className="text-6xl mb-4 animate-pulse">EAR ON A CORD</h1>
+        <p className="mb-8 text-xl">A Cyber-Noir Audio Adventure</p>
+        <button 
+          onClick={startGame}
+          className="border-2 border-green-500 px-8 py-2 text-2xl hover:bg-green-900 hover:text-white transition-all uppercase"
+        >
+          Insert Coin (Start)
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-screen bg-black">
+      <div className="flex-1 relative">
+        {currentRoom && (
+          <AdventureScene 
+            room={currentRoom}
+            currentAction={playerState.currentAction}
+            onInteractItem={handleInteractItem}
+            onInteractCharacter={handleInteractCharacter}
+          />
+        )}
+        
+        {/* Loading Overlay */}
+        {gameState === GameState.GENERATING_ROOM && (
+          <div className="absolute inset-0 bg-black flex items-center justify-center z-50">
+            <div className="text-green-500 font-['VT323'] text-2xl animate-pulse">
+              GENERATING REALITY...
+            </div>
+          </div>
+        )}
+      </div>
+
+      <RetroInterface 
+        room={currentRoom}
+        playerState={playerState}
+        onSetAction={setAction}
+        onNextLevel={handleNextLevel}
+        isGenerating={gameState === GameState.GENERATING_ROOM}
       />
-      
     </div>
   );
 };
