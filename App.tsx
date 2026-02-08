@@ -7,6 +7,7 @@ import { useAudioEngine } from './hooks/useAudioEngine';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
+  const [loadingText, setLoadingText] = useState<string>("GENERATING SCENE...");
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   
   // Dialogue State
@@ -39,12 +40,14 @@ const App: React.FC = () => {
     setGameState(GameState.GENERATING_ROOM);
     
     if (!playerState.playerSprite) {
+        setLoadingText("GENERATING PLAYER...");
         const sprite = await generatePlayerSprite();
         if (sprite) {
             setPlayerState(prev => ({ ...prev, playerSprite: sprite }));
         }
     }
     
+    setLoadingText("GENERATING ROOM...");
     const room = await generateRoom(levelRef.current);
     setCurrentRoom(room);
     setGameState(GameState.EXPLORING);
@@ -210,7 +213,7 @@ const App: React.FC = () => {
         {gameState === GameState.GENERATING_ROOM && (
           <div className="absolute inset-0 bg-black flex flex-col items-center justify-center z-50">
              <div className="text-green-500 font-['VT323'] text-3xl animate-pulse mb-4">
-               GENERATING SCENE...
+               {loadingText}
              </div>
              <div className="w-64 h-2 bg-slate-800 rounded overflow-hidden">
                 <div className="h-full bg-green-600 animate-loading-bar"></div>

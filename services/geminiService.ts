@@ -8,7 +8,7 @@ const imageModelName = "gemini-2.5-flash-image";
 // Helper to prevent rate limiting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper for retry logic on 429 errors
+// Helper for retry logic
 async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 2000): Promise<T> {
   try {
     return await fn();
@@ -16,52 +16,75 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 200
     if (retries > 0 && (error?.status === 429 || error?.code === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED'))) {
       console.warn(`Rate limit 429 hit. Retrying in ${delayMs}ms...`);
       await delay(delayMs);
-      return callWithRetry(fn, retries - 1, delayMs * 2); // Exponential backoff
+      return callWithRetry(fn, retries - 1, delayMs * 2); 
     }
     throw error;
   }
 }
 
-// Helper to load local reference image if it exists
-const loadReferenceImage = async (filename: string): Promise<string | null> => {
+// Helper: Check if a local asset exists (HEAD request)
+const checkLocalAsset = async (filename: string): Promise<string | null> => {
     try {
-        const response = await fetch(`/assets/${filename}`);
-        if (!response.ok) return null;
-        const blob = await response.blob();
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = reader.result as string;
-                // remove data:image/xxx;base64, prefix for API usage if needed, 
-                // but @google/genai usually takes raw base64 without prefix in inlineData.data
-                const rawBase64 = base64.split(',')[1];
-                resolve(rawBase64);
-            };
-            reader.readAsDataURL(blob);
-        });
+        const path = `/assets/${filename}`;
+        const response = await fetch(path, { method: 'HEAD' });
+        if (response.ok) {
+            console.log(`Found local asset: ${filename}`);
+            return path;
+        }
     } catch (e) {
-        return null;
+        // ignore
     }
+    return null;
+};
+
+// Helper: Load local reference image for AI input. Tries multiple extensions.
+const loadReferenceImage = async (baseName: string): Promise<{ base64: string, mimeType: string } | null> => {
+    const extensions = ['png', 'jpg', 'jpeg', 'webp'];
+    
+    for (const ext of extensions) {
+        try {
+            const path = `/assets/${baseName}_ref.${ext}`;
+            const response = await fetch(path);
+            if (response.ok) {
+                console.log(`Loaded reference image: ${path}`);
+                const blob = await response.blob();
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64Full = reader.result as string;
+                        const base64Data = base64Full.split(',')[1];
+                        resolve({ base64: base64Data, mimeType: blob.type });
+                    };
+                    reader.readAsDataURL(blob);
+                });
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    console.log(`No reference image found for: ${baseName}_ref`);
+    return null;
 };
 
 // -- Image Generation --
 
-export const generateImage = async (prompt: string, referenceBase64?: string | null): Promise<string | undefined> => {
+export const generateImage = async (prompt: string, reference?: { base64: string, mimeType: string } | null): Promise<string | undefined> => {
   try {
     const parts: any[] = [];
     
-    // Add reference image first if available
-    if (referenceBase64) {
+    // 1. Add Reference Image (if provided)
+    if (reference) {
         parts.push({
             inlineData: {
-                mimeType: "image/png",
-                data: referenceBase64
+                mimeType: reference.mimeType,
+                data: reference.base64
             }
         });
         // Strengthen prompt to use reference
-        prompt = `Strictly based on the attached reference image. ${prompt}`;
+        prompt = `Strictly preserve the character details from the attached reference image (face, clothes, hair). ${prompt}`;
     }
 
+    // 2. Add Text Prompt
     parts.push({ text: prompt });
 
     const response = await callWithRetry(() => ai.models.generateContent({
@@ -69,7 +92,6 @@ export const generateImage = async (prompt: string, referenceBase64?: string | n
       contents: { parts }
     }), 3, 4000); 
     
-    // Extract image
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
         return `data:image/png;base64,${part.inlineData.data}`;
@@ -81,26 +103,44 @@ export const generateImage = async (prompt: string, referenceBase64?: string | n
   return undefined;
 };
 
-// Updated to request Spritesheets
-export const generateSprite = async (description: string, referenceFilename?: string): Promise<string | undefined> => {
-    const refBase64 = referenceFilename ? await loadReferenceImage(referenceFilename) : null;
+// Updated logic: Check for Final Asset -> Check for Reference -> Generate
+export const generateSprite = async (description: string, assetName?: string): Promise<string | undefined> => {
     
+    // 1. Check if the user provided a FINISHED spritesheet (e.g., "player.png") to skip AI
+    if (assetName) {
+        const localSheet = await checkLocalAsset(`${assetName}.png`);
+        if (localSheet) return localSheet;
+    }
+
+    // 2. Check if the user provided a REFERENCE for AI (e.g., "player_ref.jpg")
+    const referenceData = assetName ? await loadReferenceImage(assetName) : null;
+    
+    // 3. Generate with AI
     // We request a 3-pose sheet: Front, Side, Back.
-    // The renderer will handle cropping.
-    return generateImage(`
-        Character Sheet of ${description}. 
-        Style: Pop Art, Comic Book, Roy Lichtenstein style. 
-        Format: Three distinct full-body poses arranged horizontally in a row.
-        1. Front View (facing camera).
-        2. Side View (walking right).
-        3. Back View (facing away).
-        Details: Thick black outlines, flat colors, Ben-Day dots.
-        Background: Transparent or solid white (isolated).
-        Do not crop heads or feet. Keep scale consistent.
-    `, refBase64);
+    const prompt = `
+        Create a Character Sprite Sheet.
+        Style: Pop Art, Comic Book, Roy Lichtenstein style (thick outlines, Ben-Day dots, bold colors).
+        Layout: Three distinct full-body poses arranged horizontally in a row on a white background.
+        
+        The image MUST be divided into three equal columns:
+        [ Column 1: Front View ] [ Column 2: Side View (Walking Right) ] [ Column 3: Back View ]
+        
+        Rules:
+        - The character must match the reference image provided in terms of clothing, gender, and features.
+        - Keep the background solid white or transparent. 
+        - Do not crop the head or feet.
+        - Characters should be centered in their respective 1/3 sections.
+    `;
+
+    return generateImage(prompt, referenceData);
 };
 
-export const generateBackground = async (description: string): Promise<string | undefined> => {
+export const generateBackground = async (description: string, assetName?: string): Promise<string | undefined> => {
+    if (assetName) {
+        const localBg = await checkLocalAsset(`${assetName}.png`);
+        if (localBg) return localBg;
+    }
+
     return generateImage(`
         Point and click adventure game background art.
         Scene: ${description}.
@@ -112,44 +152,48 @@ export const generateBackground = async (description: string): Promise<string | 
 }
 
 export const generatePlayerSprite = async (): Promise<string | undefined> => {
+    // This will look for 'player_ref.jpg' (or png/jpeg) and generate the sheet
+    // We add a backup description just in case the reference is missing or ambiguous
     return generateSprite(
-        "a young woman with blonde hair in a bun wearing a green zip-up hoodie holding a plastic ear", 
-        "player_ref.png"
+        "a cool female detective in a green hoodie", 
+        "player"
     );
 }
 
 // -- Text/Logic Generation --
 
 export const generateRoom = async (level: number): Promise<Room> => {
-  // Hardcoded structure for Level 1 to match the user's specific story request
   if (level === 1) {
       const description = "A stylized blue and grey jazz club with heavy curtains and stage lights. Pop art style.";
       
-      const bgUrl = await generateBackground(description);
-      await delay(2000); 
+      const bgUrl = await generateBackground(description, "room1");
+      await delay(1000); 
 
-      // Attempt to use reference images if they exist in /assets/
+      // Check for 'sax_ref.jpg' -> generates sheet
       const saxManImg = await generateSprite(
           "a heavy set man playing a gold saxophone, wearing a white shirt and tie", 
-          "sax_ref.png"
+          "sax"
       );
-      await delay(2000);
+      await delay(1000);
       
+      // Check for 'bald_ref.jpg' -> generates sheet
       const baldManImg = await generateSprite(
           "a tall bald man in a blue suit standing menacingly", 
-          "bald_ref.png"
+          "bald"
       );
-      await delay(2000);
+      await delay(1000);
       
+      // Check for 'guitar_ref.jpg' -> generates sheet
       const guitarManImg = await generateSprite(
           "a young man playing electric guitar sitting down", 
-          "guitar_ref.png"
+          "guitar"
       );
-      await delay(2000);
+      await delay(1000);
       
+      // Check for 'mic_ref.jpg' -> generates sheet
       const itemImg = await generateSprite(
           "a retro microphone stand", 
-          "mic_ref.png"
+          "mic"
       );
 
       return {
