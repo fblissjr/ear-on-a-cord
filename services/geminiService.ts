@@ -30,10 +30,11 @@ export const generateImage = async (prompt: string): Promise<string | undefined>
 
 export const generateSprite = async (description: string): Promise<string | undefined> => {
     return generateImage(`
-        Pixel art sprite of ${description}. 
-        Style: 90s Adventure Game (LucasArts), vibrant, detailed.
-        View: Full body, standing pose.
-        Background: Solid black (0,0,0) or transparent if possible.
+        Character design sprite of ${description}. 
+        Style: Pop Art, Comic Book, Roy Lichtenstein style. 
+        Details: Thick black outlines, bold flat colors, Ben-Day dots shading.
+        View: Full body, standing pose, facing forward, isolated on solid black background.
+        Do not crop the head or feet.
     `);
 };
 
@@ -41,29 +42,83 @@ export const generateBackground = async (description: string): Promise<string | 
     return generateImage(`
         Point and click adventure game background art.
         Scene: ${description}.
-        Style: 90s LucasArts (Day of the Tentacle, Sam & Max). Hand-drawn, wonky perspective, vibrant colors.
-        View: Wide shot, interior or exterior, room composition.
-        No characters, no text, no UI.
+        Style: Pop Art Comic Book style (like Roy Lichtenstein).
+        Details: Halftone patterns, bold outlines, vibrant colors.
+        Perspective: Cinematic wide shot, room interior.
+        No characters, no text, no UI in the background.
     `);
 }
 
 export const generatePlayerSprite = async (): Promise<string | undefined> => {
-    return generateSprite("a cool female detective in a green hoodie holding a cybernetic ear device");
+    return generateSprite("a young woman with blonde hair in a bun wearing a green zip-up hoodie holding a plastic ear, side profile");
 }
 
 // -- Text/Logic Generation --
 
 export const generateRoom = async (level: number): Promise<Room> => {
+  // Hardcoded structure for Level 1 to match the user's specific story request
+  if (level === 1) {
+      const description = "A stylized blue and grey room with heavy curtains. A band is playing.";
+      
+      // Parallel generation for assets
+      const bgPromise = generateBackground(description);
+      
+      const saxManImg = await generateSprite("a heavy set man playing a gold saxophone, wearing a white shirt and tie");
+      const baldManImg = await generateSprite("a tall bald man in a blue suit standing menacingly");
+      const guitarManImg = await generateSprite("a young man playing electric guitar sitting down");
+      
+      const itemImg = await generateSprite("a retro microphone stand");
+
+      const bgUrl = await bgPromise;
+
+      return {
+        id: `room-1`,
+        name: "The Jazz Room",
+        description: description,
+        backgroundImageUrl: bgUrl,
+        themeColor: "#4f46e5",
+        items: [
+            {
+                id: 'item-mic', name: 'Mic Stand', emoji: '🎤', 
+                description: 'A chrome microphone stand.', 
+                imageUrl: itemImg,
+                x: 20, y: 80, width: 10,
+                soundSecret: 'Feedback loop.', isKey: false, isTaken: false
+            }
+        ],
+        characters: [
+            {
+                id: 'char-sax', name: 'Saxophonist', emoji: '🎷',
+                description: 'He is lost in the music.', personality: 'Soulful but busy.',
+                imageUrl: saxManImg,
+                x: 75, y: 75, width: 25 // Large width
+            },
+            {
+                id: 'char-bald', name: 'The Bodyguard', emoji: '🕴️',
+                description: 'He watches your every move.', personality: 'Stoic, threatening.',
+                imageUrl: baldManImg,
+                x: 40, y: 65, width: 20
+            },
+            {
+                id: 'char-guitar', name: 'Guitarist', emoji: '🎸',
+                description: 'Strumming quietly in the corner.', personality: 'Chill.',
+                imageUrl: guitarManImg,
+                x: 15, y: 60, width: 15
+            }
+        ]
+      };
+  }
+
+  // AI Generated levels for 2+
   const prompt = `
-    Design a single room for a surreal noir adventure game.
-    Theme: "The Auditory Foundry" - a place where sounds are manufactured.
+    Design a room for a Pop-Art Noir adventure game.
     Level: ${level}.
     
     Return JSON:
     - name: string
-    - description: string (visual description for background generation)
+    - description: string
     - themeColor: hex string
-    - items: list of 3 items (name, visual_desc, secret_sound, is_key)
+    - items: list of 2 items (name, visual_desc, secret_sound, is_key)
     - characters: list of 1 character (name, visual_desc, personality)
   `;
 
@@ -113,7 +168,6 @@ export const generateRoom = async (level: number): Promise<Room> => {
     if (response.text) {
       const data = JSON.parse(response.text);
       
-      // Parallel generation for assets
       const bgPromise = generateBackground(data.description);
       
       const itemsPromise = data.items.map(async (item: any, i: number) => ({
@@ -121,9 +175,9 @@ export const generateRoom = async (level: number): Promise<Room> => {
           id: `item-${i}`,
           emoji: '📦',
           imageUrl: await generateSprite(item.description),
-          x: 20 + (i * 20),
-          y: 60 + (Math.random() * 20),
-          width: 8,
+          x: 20 + (i * 30),
+          y: 70 + (Math.random() * 10),
+          width: 12,
           isTaken: false
       }));
 
@@ -132,9 +186,9 @@ export const generateRoom = async (level: number): Promise<Room> => {
           id: `char-${i}`,
           emoji: '👤',
           imageUrl: await generateSprite(char.description),
-          x: 70,
-          y: 60,
-          width: 12
+          x: 60,
+          y: 70,
+          width: 20
       }));
 
       const [bgUrl, items, characters] = await Promise.all([bgPromise, Promise.all(itemsPromise), Promise.all(charPromise)]);
@@ -154,8 +208,8 @@ export const generateRoom = async (level: number): Promise<Room> => {
     console.error(e);
     return {
         id: 'fallback',
-        name: 'The White Room',
-        description: 'A place of nothingness.',
+        name: 'Static Void',
+        description: 'Connection lost.',
         themeColor: '#ffffff',
         items: [],
         characters: []
