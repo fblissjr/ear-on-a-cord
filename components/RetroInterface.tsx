@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActionType, PlayerState, Room, DialogueOption } from '../types';
+import { ActionType, PlayerState, Room, GameState } from '../types';
 
 interface RetroInterfaceProps {
   room: Room | null;
@@ -10,6 +10,7 @@ interface RetroInterfaceProps {
   isGenerating: boolean;
   dialogueOptions: string[] | null;
   npcText: string | null;
+  gameState: GameState;
 }
 
 const RetroInterface: React.FC<RetroInterfaceProps> = ({ 
@@ -20,7 +21,8 @@ const RetroInterface: React.FC<RetroInterfaceProps> = ({
   onDialogueSelect,
   isGenerating,
   dialogueOptions,
-  npcText
+  npcText,
+  gameState
 }) => {
   const verbs: ActionType[] = [
     'GIVE', 'PICK UP', 'USE',
@@ -29,16 +31,16 @@ const RetroInterface: React.FC<RetroInterfaceProps> = ({
   ];
 
   // If in Dialogue Mode, render a different interface
-  if (dialogueOptions) {
+  if (gameState === GameState.DIALOGUE) {
       return (
         <div className="h-[40vh] bg-[#1a1a1a] border-t-4 border-slate-600 p-6 flex flex-col font-['Space_Mono']">
             {/* NPC Portrait placeholder could go here */}
             <div className="flex-1 text-center mb-6">
-                 <p className="text-yellow-400 text-xl mb-2 font-bold">{npcText}</p>
+                 <p className="text-yellow-400 text-xl mb-2 font-bold animate-pulse">{npcText}</p>
             </div>
             
             <div className="flex flex-col gap-2">
-                {dialogueOptions.map((opt, i) => (
+                {dialogueOptions && dialogueOptions.map((opt, i) => (
                     <button 
                         key={i}
                         onClick={() => onDialogueSelect(opt)}
@@ -47,6 +49,10 @@ const RetroInterface: React.FC<RetroInterfaceProps> = ({
                         • "{opt}"
                     </button>
                 ))}
+                
+                {(!dialogueOptions || dialogueOptions.length === 0) && (
+                    <div className="text-slate-500 text-center italic">Thinking...</div>
+                )}
             </div>
         </div>
       );

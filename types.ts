@@ -8,6 +8,8 @@ export enum GameState {
 
 export type ActionType = 'GIVE' | 'PICK UP' | 'USE' | 'OPEN' | 'LOOK AT' | 'PUSH' | 'CLOSE' | 'TALK TO' | 'PULL';
 
+export type Direction = 'FRONT' | 'BACK' | 'LEFT' | 'RIGHT';
+
 export interface Item {
   id: string;
   name: string;
@@ -32,6 +34,7 @@ export interface Character {
   width?: number;
   description: string;
   personality: string; // Context for AI generation
+  facing?: Direction; // Default FRONT
 }
 
 export interface Room {
@@ -51,6 +54,7 @@ export interface PlayerState {
   playerSprite?: string;
   playerX: number; // 0-100
   playerY: number; // 0-100
+  facing: Direction;
 }
 
 export interface DialogueOption {

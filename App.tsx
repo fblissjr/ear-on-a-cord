@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import AdventureScene from './components/AdventureScene';
 import RetroInterface from './components/RetroInterface';
 import { generateRoom, generatePlayerSprite, generateDialogue } from './services/geminiService';
-import { GameState, Room, Item, Character, ActionType, PlayerState } from './types';
+import { GameState, Room, Item, Character, ActionType, PlayerState, Direction } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 
 const App: React.FC = () => {
@@ -19,7 +19,8 @@ const App: React.FC = () => {
     currentAction: null,
     log: [],
     playerX: 50,
-    playerY: 80
+    playerY: 80,
+    facing: 'FRONT'
   });
   
   const { initAudio, playBlip, playError, playSuccess, playScan } = useAudioEngine();
@@ -52,9 +53,25 @@ const App: React.FC = () => {
 
   // Move player and update state
   const handleMove = (x: number, y: number) => {
-      // Simple instant update for now, CSS transition handles smoothness
-      setPlayerState(prev => ({ ...prev, playerX: x, playerY: y }));
-      // If we move, we might cancel current action? classic games kept it, let's keep it.
+      setPlayerState(prev => {
+          let facing: Direction = prev.facing;
+          const dx = x - prev.playerX;
+          const dy = y - prev.playerY;
+
+          // Determine dominant direction
+          if (Math.abs(dx) > Math.abs(dy)) {
+              facing = dx > 0 ? 'RIGHT' : 'LEFT';
+          } else {
+              facing = dy > 0 ? 'FRONT' : 'BACK'; // Higher Y is "closer" to camera (Front)
+          }
+
+          return { 
+              ...prev, 
+              playerX: x, 
+              playerY: y,
+              facing
+          };
+      });
   }
 
   const handleInteractItem = (item: Item) => {
@@ -134,7 +151,7 @@ const App: React.FC = () => {
       if (!dialogueTarget) return;
       
       setNpcText("..."); // Loading indicator
-      setDialogueOptions(null); // Hide options
+      setDialogueOptions([]); // Empty array keeps UI in dialogue mode via RetroInterface check
       
       const result = await generateDialogue(dialogueTarget, option);
       
@@ -212,6 +229,7 @@ const App: React.FC = () => {
             isGenerating={gameState === GameState.GENERATING_ROOM}
             dialogueOptions={dialogueOptions}
             npcText={npcText}
+            gameState={gameState}
         />
       </div>
     </div>

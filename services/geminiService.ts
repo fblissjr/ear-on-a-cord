@@ -5,16 +5,69 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const modelName = "gemini-2.5-flash-lite";
 const imageModelName = "gemini-2.5-flash-image";
 
+// Helper to prevent rate limiting
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper for retry logic on 429 errors
+async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 2000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries > 0 && (error?.status === 429 || error?.code === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED'))) {
+      console.warn(`Rate limit 429 hit. Retrying in ${delayMs}ms...`);
+      await delay(delayMs);
+      return callWithRetry(fn, retries - 1, delayMs * 2); // Exponential backoff
+    }
+    throw error;
+  }
+}
+
+// Helper to load local reference image if it exists
+const loadReferenceImage = async (filename: string): Promise<string | null> => {
+    try {
+        const response = await fetch(`/assets/${filename}`);
+        if (!response.ok) return null;
+        const blob = await response.blob();
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64 = reader.result as string;
+                // remove data:image/xxx;base64, prefix for API usage if needed, 
+                // but @google/genai usually takes raw base64 without prefix in inlineData.data
+                const rawBase64 = base64.split(',')[1];
+                resolve(rawBase64);
+            };
+            reader.readAsDataURL(blob);
+        });
+    } catch (e) {
+        return null;
+    }
+};
+
 // -- Image Generation --
 
-export const generateImage = async (prompt: string): Promise<string | undefined> => {
+export const generateImage = async (prompt: string, referenceBase64?: string | null): Promise<string | undefined> => {
   try {
-    const response = await ai.models.generateContent({
+    const parts: any[] = [];
+    
+    // Add reference image first if available
+    if (referenceBase64) {
+        parts.push({
+            inlineData: {
+                mimeType: "image/png",
+                data: referenceBase64
+            }
+        });
+        // Strengthen prompt to use reference
+        prompt = `Strictly based on the attached reference image. ${prompt}`;
+    }
+
+    parts.push({ text: prompt });
+
+    const response = await callWithRetry(() => ai.models.generateContent({
       model: imageModelName,
-      contents: {
-        parts: [{ text: prompt }]
-      }
-    });
+      contents: { parts }
+    }), 3, 4000); 
     
     // Extract image
     for (const part of response.candidates?.[0]?.content?.parts || []) {
@@ -28,15 +81,23 @@ export const generateImage = async (prompt: string): Promise<string | undefined>
   return undefined;
 };
 
-export const generateSprite = async (description: string): Promise<string | undefined> => {
+// Updated to request Spritesheets
+export const generateSprite = async (description: string, referenceFilename?: string): Promise<string | undefined> => {
+    const refBase64 = referenceFilename ? await loadReferenceImage(referenceFilename) : null;
+    
+    // We request a 3-pose sheet: Front, Side, Back.
+    // The renderer will handle cropping.
     return generateImage(`
-        Character design sprite of ${description}. 
+        Character Sheet of ${description}. 
         Style: Pop Art, Comic Book, Roy Lichtenstein style. 
-        Details: Thick black outlines, bold flat colors, Ben-Day dots shading.
-        View: Full body, standing pose, facing forward.
-        Background: Transparent background, no background color, isolated cutout.
-        Do not crop the head or feet.
-    `);
+        Format: Three distinct full-body poses arranged horizontally in a row.
+        1. Front View (facing camera).
+        2. Side View (walking right).
+        3. Back View (facing away).
+        Details: Thick black outlines, flat colors, Ben-Day dots.
+        Background: Transparent or solid white (isolated).
+        Do not crop heads or feet. Keep scale consistent.
+    `, refBase64);
 };
 
 export const generateBackground = async (description: string): Promise<string | undefined> => {
@@ -51,7 +112,10 @@ export const generateBackground = async (description: string): Promise<string | 
 }
 
 export const generatePlayerSprite = async (): Promise<string | undefined> => {
-    return generateSprite("a young woman with blonde hair in a bun wearing a green zip-up hoodie holding a plastic ear, side profile");
+    return generateSprite(
+        "a young woman with blonde hair in a bun wearing a green zip-up hoodie holding a plastic ear", 
+        "player_ref.png"
+    );
 }
 
 // -- Text/Logic Generation --
@@ -61,16 +125,32 @@ export const generateRoom = async (level: number): Promise<Room> => {
   if (level === 1) {
       const description = "A stylized blue and grey jazz club with heavy curtains and stage lights. Pop art style.";
       
-      // Parallel generation for assets
-      const bgPromise = generateBackground(description);
-      
-      const saxManImg = await generateSprite("a heavy set man playing a gold saxophone, wearing a white shirt and tie");
-      const baldManImg = await generateSprite("a tall bald man in a blue suit standing menacingly");
-      const guitarManImg = await generateSprite("a young man playing electric guitar sitting down");
-      
-      const itemImg = await generateSprite("a retro microphone stand");
+      const bgUrl = await generateBackground(description);
+      await delay(2000); 
 
-      const bgUrl = await bgPromise;
+      // Attempt to use reference images if they exist in /assets/
+      const saxManImg = await generateSprite(
+          "a heavy set man playing a gold saxophone, wearing a white shirt and tie", 
+          "sax_ref.png"
+      );
+      await delay(2000);
+      
+      const baldManImg = await generateSprite(
+          "a tall bald man in a blue suit standing menacingly", 
+          "bald_ref.png"
+      );
+      await delay(2000);
+      
+      const guitarManImg = await generateSprite(
+          "a young man playing electric guitar sitting down", 
+          "guitar_ref.png"
+      );
+      await delay(2000);
+      
+      const itemImg = await generateSprite(
+          "a retro microphone stand", 
+          "mic_ref.png"
+      );
 
       return {
         id: `room-1`,
@@ -124,7 +204,7 @@ export const generateRoom = async (level: number): Promise<Room> => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await callWithRetry(() => ai.models.generateContent({
       model: modelName,
       contents: prompt,
       config: {
@@ -164,35 +244,46 @@ export const generateRoom = async (level: number): Promise<Room> => {
             required: ["name", "description", "items", "characters", "themeColor"]
         }
       }
-    });
+    }), 3, 2000);
 
     if (response.text) {
       const data = JSON.parse(response.text);
       
-      const bgPromise = generateBackground(data.description);
-      
-      const itemsPromise = data.items.map(async (item: any, i: number) => ({
-          ...item,
-          id: `item-${i}`,
-          emoji: '📦',
-          imageUrl: await generateSprite(item.description),
-          x: 20 + (i * 30),
-          y: 70 + (Math.random() * 10),
-          width: 12,
-          isTaken: false
-      }));
+      const bgUrl = await generateBackground(data.description);
+      await delay(2000);
 
-      const charPromise = data.characters.map(async (char: any, i: number) => ({
-          ...char,
-          id: `char-${i}`,
-          emoji: '👤',
-          imageUrl: await generateSprite(char.description),
-          x: 60,
-          y: 70,
-          width: 20
-      }));
+      const items = [];
+      for (let i = 0; i < data.items.length; i++) {
+          const item = data.items[i];
+          const img = await generateSprite(item.description);
+          await delay(2000);
+          items.push({
+            ...item,
+            id: `item-${i}`,
+            emoji: '📦',
+            imageUrl: img,
+            x: 20 + (i * 30),
+            y: 70 + (Math.random() * 10),
+            width: 12,
+            isTaken: false
+          });
+      }
 
-      const [bgUrl, items, characters] = await Promise.all([bgPromise, Promise.all(itemsPromise), Promise.all(charPromise)]);
+      const characters = [];
+      for (let i = 0; i < data.characters.length; i++) {
+          const char = data.characters[i];
+          const img = await generateSprite(char.description);
+          await delay(2000);
+          characters.push({
+            ...char,
+            id: `char-${i}`,
+            emoji: '👤',
+            imageUrl: img,
+            x: 60,
+            y: 70,
+            width: 20
+          });
+      }
 
       return {
         id: `room-${Date.now()}`,
@@ -231,7 +322,7 @@ export const generateDialogue = async (char: Character, playerPrompt: string): P
     `;
     
     try {
-        const result = await ai.models.generateContent({
+        const result = await callWithRetry(() => ai.models.generateContent({
             model: modelName,
             contents: prompt,
             config: {
@@ -244,14 +335,14 @@ export const generateDialogue = async (char: Character, playerPrompt: string): P
                     }
                 }
             }
-        });
+        }), 3, 2000);
         
         if (result.text) {
             const data = JSON.parse(result.text);
             return { text: data.response, options: data.options };
         }
     } catch (e) {
-        console.error(e);
+        console.error("Dialogue Gen Error", e);
     }
     
     return { text: "...", options: ["Leave"] };
