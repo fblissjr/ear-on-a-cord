@@ -33,7 +33,8 @@ export const generateSprite = async (description: string): Promise<string | unde
         Character design sprite of ${description}. 
         Style: Pop Art, Comic Book, Roy Lichtenstein style. 
         Details: Thick black outlines, bold flat colors, Ben-Day dots shading.
-        View: Full body, standing pose, facing forward, isolated on solid black background.
+        View: Full body, standing pose, facing forward.
+        Background: Transparent background, no background color, isolated cutout.
         Do not crop the head or feet.
     `);
 };
@@ -58,7 +59,7 @@ export const generatePlayerSprite = async (): Promise<string | undefined> => {
 export const generateRoom = async (level: number): Promise<Room> => {
   // Hardcoded structure for Level 1 to match the user's specific story request
   if (level === 1) {
-      const description = "A stylized blue and grey room with heavy curtains. A band is playing.";
+      const description = "A stylized blue and grey jazz club with heavy curtains and stage lights. Pop art style.";
       
       // Parallel generation for assets
       const bgPromise = generateBackground(description);
@@ -82,7 +83,7 @@ export const generateRoom = async (level: number): Promise<Room> => {
                 id: 'item-mic', name: 'Mic Stand', emoji: '🎤', 
                 description: 'A chrome microphone stand.', 
                 imageUrl: itemImg,
-                x: 20, y: 80, width: 10,
+                x: 15, y: 75, width: 8,
                 soundSecret: 'Feedback loop.', isKey: false, isTaken: false
             }
         ],
@@ -91,19 +92,19 @@ export const generateRoom = async (level: number): Promise<Room> => {
                 id: 'char-sax', name: 'Saxophonist', emoji: '🎷',
                 description: 'He is lost in the music.', personality: 'Soulful but busy.',
                 imageUrl: saxManImg,
-                x: 75, y: 75, width: 25 // Large width
+                x: 80, y: 70, width: 22 
             },
             {
                 id: 'char-bald', name: 'The Bodyguard', emoji: '🕴️',
                 description: 'He watches your every move.', personality: 'Stoic, threatening.',
                 imageUrl: baldManImg,
-                x: 40, y: 65, width: 20
+                x: 50, y: 65, width: 18
             },
             {
                 id: 'char-guitar', name: 'Guitarist', emoji: '🎸',
                 description: 'Strumming quietly in the corner.', personality: 'Chill.',
                 imageUrl: guitarManImg,
-                x: 15, y: 60, width: 15
+                x: 25, y: 65, width: 18
             }
         ]
       };

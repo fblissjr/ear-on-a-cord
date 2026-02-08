@@ -31,18 +31,17 @@ const AdventureScene: React.FC<AdventureSceneProps> = ({
     setTimeout(() => setClickEffect(null), 500);
   };
 
-  // Helper for fake perspective scaling based on Y position (horizon line approx 30%)
-  // Adjusted: Less aggressive shrinking so characters stay visible
+  // Helper for fake perspective scaling based on Y position
   const getScale = (y: number) => {
-    const baseScale = 1;
+    const baseScale = 1.0;
     // Map Y 40-100 to Scale 0.8-1.2
     const range = (y - 40) / 60; 
     const p = Math.max(0, Math.min(1, range));
-    return baseScale * (0.8 + 0.4 * p); 
+    return baseScale * (0.9 + 0.3 * p); 
   };
 
   return (
-    <div className="relative w-full h-[60vh] bg-[#111] overflow-hidden select-none cursor-crosshair">
+    <div className="relative w-full h-full bg-[#111] overflow-hidden select-none cursor-crosshair">
       
       {/* Background Layer */}
       {room.backgroundImageUrl ? (
@@ -78,7 +77,7 @@ const AdventureScene: React.FC<AdventureSceneProps> = ({
       {/* Items */}
       {room.items.filter(i => !i.isTaken).map(item => {
         const scale = getScale(item.y);
-        const width = item.width || 12; // Default bigger width
+        const width = item.width || 15; // Default bigger width
         return (
             <div
                 key={item.id}
@@ -110,7 +109,7 @@ const AdventureScene: React.FC<AdventureSceneProps> = ({
       {/* Characters */}
       {room.characters.map(char => {
         const scale = getScale(char.y);
-        const width = char.width || 20; // Default bigger width
+        const width = char.width || 25; // Default bigger width
         return (
             <div
                 key={char.id}

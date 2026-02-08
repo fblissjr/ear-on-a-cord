@@ -178,7 +178,7 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen bg-black overflow-hidden">
       <div className="flex-1 relative flex items-center justify-center bg-[#050505]">
         {currentRoom && (
-          <div className="w-full max-w-4xl border-x-4 border-slate-800 shadow-2xl relative">
+          <div className="w-full h-full border-x-0 border-slate-800 shadow-2xl relative">
              <AdventureScene 
                 room={currentRoom}
                 playerState={playerState}
@@ -202,7 +202,7 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <div className="w-full max-w-4xl mx-auto border-x-4 border-slate-800">
+      <div className="w-full mx-auto border-t-4 border-slate-800">
         <RetroInterface 
             room={currentRoom}
             playerState={playerState}
